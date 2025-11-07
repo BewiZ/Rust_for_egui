@@ -1,0 +1,982 @@
+use eframe::egui::{self, FontData, FontDefinitions, TextureOptions, ScrollArea};
+use std::path::Path;
+use egui::{ColorImage, RichText, TextureHandle};
+use nalgebra::Vector4;
+
+struct MyEguiApp {
+    selected_file: Option<String>,
+    texture: Option<TextureHandle>,
+    image_size: egui::Vec2,
+    left_panel_width: f32,
+    rows: Vec<TableRow>,
+}
+
+#[derive(Default)]
+struct TextOptions {
+    size: Option<f32>,
+    color: Option<Vector4<u8>>,
+    align: &'static str,
+}
+
+#[derive(Clone)]
+struct TableRow {
+    tag_name1: String,
+    tag_value1: String,
+    tag_name2: String,
+    tag_value2: String,
+}
+
+impl Default for TableRow {
+    fn default() -> Self {
+        Self {
+            tag_name1: String::new(),
+            tag_value1: String::new(),
+            tag_name2: String::new(),
+            tag_value2: String::new(),
+        }
+    }
+}
+
+impl Default for MyEguiApp {
+    fn default() -> Self {
+        Self {
+            selected_file: None,
+            texture: None,
+            image_size: egui::Vec2::new(0.0, 0.0),
+            left_panel_width: 0.0,
+            rows: vec![
+                TableRow {
+                    tag_name1: "width".to_string(),
+                    tag_value1: "1920".to_string(),
+                    tag_name2: "height".to_string(),
+                    tag_value2: "1080".to_string(),
+                },
+                TableRow {
+                    tag_name1: "Exsposure Time".to_string(),
+                    tag_value1: "".to_string(),
+                    tag_name2: "F Number".to_string(),
+                    tag_value2: "".to_string(),
+                }
+            ],
+        }
+    }
+}
+/**
+ * 设置 EGUI 字体的函数
+ * @param ctx - EGUI 上下文引用，用于设置字体
+ */
+fn setup_fonts_and_style(ctx: &egui::Context) {
+    // 创建一个新的字体定义，使用默认配置
+    let mut fonts = FontDefinitions::default();
+
+    // 从系统字体加载中文字体（这里以 "微软雅黑" 为例），将字体文件数据插入到字体定义中
+    fonts.font_data.insert(
+        "微软雅黑".to_owned(), // 字体名称
+        std::sync::Arc::new(
+            FontData::from_static(
+                include_bytes!(
+                    "C:\\Windows\\Fonts\\msyh.ttc" // 替换为你的字体路径
+                )
+            )
+        ), 
+    );
+
+    // 将中文字体添加到默认字体族中
+    fonts.families.get_mut(&egui::FontFamily::Proportional).unwrap()
+        .insert(0, "微软雅黑".to_owned());
+   
+    ctx.set_fonts(fonts); // 应用新的字体
+
+    let mut style = (*ctx.style()).clone(); // 克隆当前样式
+
+    // 设置默认文本样式
+    style.text_styles = [
+        (egui::TextStyle::Heading, egui::FontId::new(20.0, egui::FontFamily::Proportional)),
+        (egui::TextStyle::Body, egui::FontId::new(16.0, egui::FontFamily::Proportional)),
+        (egui::TextStyle::Button, egui::FontId::new(14.0, egui::FontFamily::Proportional)),
+        (egui::TextStyle::Small, egui::FontId::new(10.0, egui::FontFamily::Proportional)),
+        (egui::TextStyle::Monospace, egui::FontId::new(14.0, egui::FontFamily::Monospace)),
+    ].into();
+
+    // 设置默认文本颜色
+    style.visuals.widgets.noninteractive.fg_stroke.color = egui::Color32::from_rgb(255, 255, 255);
+    style.visuals.widgets.inactive.fg_stroke.color = egui::Color32::from_rgb(255, 255, 255);
+    style.visuals.widgets.hovered.fg_stroke.color = egui::Color32::from_rgb(200, 200, 200);
+    style.visuals.widgets.active.fg_stroke.color = egui::Color32::from_rgb(150, 150, 150);
+    
+    // 设置背景颜色
+    style.visuals.window_fill = egui::Color32::from_rgb(45, 45, 45);
+    style.visuals.panel_fill = egui::Color32::from_rgb(30, 30, 30);
+    style.visuals.window_stroke.color = egui::Color32::from_rgb(80, 80, 80);
+
+    // 设置超链接颜色
+    style.visuals.hyperlink_color = egui::Color32::from_rgb(100, 150, 255);
+    
+    ctx.set_style(style); // 应用新的样式
+}
+
+fn custom_text(
+    ui: &mut egui::Ui,
+    text: &str,
+    heading_or_label: &str,
+    options: Option<TextOptions>,
+) {
+    // 设置默认值
+    let is_heading = match heading_or_label {
+        "heading" => true,
+        "label" => false,
+        _ => false,
+    };
+
+    let options = options.unwrap_or_default();
+    let size = match options.size {
+        Some(size) => size,
+        None => 16.0,
+    };
+
+
+    let color = match options.color {
+        Some(color) => color,
+        None => Vector4::new(255, 255, 255, 255),
+    };
+
+    let align = match options.align {
+        "LEFT" => egui::Align::LEFT,
+        "CENTER" => egui::Align::Center,
+        "RIGHT" => egui::Align::RIGHT,
+        _ => egui::Align::LEFT,
+    };
+
+    // 创建富文本
+    let rich_text = egui::RichText::new(text)
+        .size(size)
+        .color(egui::Color32::from_rgba_premultiplied(
+            color.x,
+            color.y,
+            color.z,
+            color.w,
+        ));
+
+    // 根据对齐方式设置布局
+    ui.with_layout(egui::Layout::top_down(align),|ui| {
+        if is_heading {
+            ui.heading(rich_text);
+        } else {
+            ui.label(rich_text);
+        }
+    }).inner;
+
+}
+
+impl MyEguiApp {
+    fn load_image(&mut self, ctx: &egui::Context, path: &str) -> Result<(), String> {
+        // 读取图片文件到字节数组
+        // 使用std::fs::read读取整个文件到内存
+        let image_bytes = std::fs::read(path)
+            .map_err(|e| format!("无法读取文件: {}", e))?;
+        
+        // 解码图片字节数据
+        // 使用image库从内存字节加载图片，支持多种格式(PNG, JPG, JPEG, BMP, GIF等)
+        let image = image::load_from_memory(&image_bytes)
+            .map_err(|e| format!("无法解码图片: {}", e))?
+            .to_rgba8();
+        
+        // 获取图片尺寸
+        // image.width()和image.height()返回u32类型，转换为usize用于数组索引
+        let size = [image.width() as _, image.height() as _];
+
+        // 创建EGUI颜色图像数据
+        // from_rgba_unmultiplied: 从非预乘RGBA数据创建颜色图像
+        // 预乘alpha意味着颜色值已经乘以了alpha值，这里使用非预乘格式
+        let image_data = ColorImage::from_rgba_unmultiplied(size, &image);
+        
+        // 存储图片尺寸到应用状态中，用于后续显示比例计算
+        // 转换为f32类型，因为EGUI使用浮点数坐标系统
+        self.image_size = egui::Vec2::new(size[0] as f32, size[1] as f32);
+        
+        // 从文件路径提取文件名作为纹理名称
+        // 如果无法提取文件名，使用默认名称"image"
+        let texture_name = Path::new(path)
+            .file_name() // 获取文件名部分(不含路径)
+            .and_then(|n| n.to_str()) // OsStr转换为&str
+            .unwrap_or("image"); // 如果转换失败使用默认值
+
+        self.texture = Some(ctx.load_texture(
+            texture_name, // 纹理标识名称
+            image_data, // 图片数据
+            TextureOptions::default() // 纹理选项
+        ));
+
+        Ok(())
+    }
+
+
+
+}
+
+impl eframe::App for MyEguiApp {
+    
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+
+        let available_width = ctx.available_rect().width(); // 使用 ctx 获取宽度
+        let available_height = ctx.available_rect().height(); // 使用 ctx 获取高度
+
+        // let left_panel_width = available_width * 0.35;  // 与左侧面板的default_width保持一致
+        // 左侧可滚动面板
+        egui::SidePanel::left("left_panel")
+            .resizable(true)  // 允许调整大小
+            .default_width(available_width * 0.35)  // 默认宽度
+            .min_width(available_width * 0.3)  // 最小宽度
+            .max_width(available_width * 0.4)  // 最大宽度
+            .show(ctx, |ui| {
+
+                self.left_panel_width = ui.available_width();  // 更新实际宽度
+
+                custom_text(ui, "Area can scroll on the left", "heading", 
+                Some(TextOptions { 
+                    size: Some(20.0), 
+                    color: None, 
+                    align: "CENTER" }));
+                ui.separator();
+                
+                // 添加滚动区域
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false; 2])
+                    .show(ui, |ui| {
+                        if ui.button("Files").clicked() {
+                            if let Some(path) = rfd::FileDialog::new()
+                                .add_filter("Picture", &["png", "jpg", "jpeg", "bmp", "gif"])
+                                .pick_file() 
+                            {
+                                let file_path = path.display().to_string();
+                                self.selected_file = Some(file_path.clone());
+                                        
+                                // 加载选中的图片
+                                if let Err(e) = self.load_image(ctx, &file_path) {
+                                    eprintln!("Fail to load pictures: {}", e);
+                                            self.texture = None;
+                                }
+                            }
+                        }
+
+                        ui.separator(); // 添加分隔线
+                        if self.rows.is_empty() {
+                            ui.centered_and_justified(|ui| {
+                                ui.label("No data available, please add new items above");
+                            });
+                            return;
+                        }
+
+                        egui::Grid::new("products_grid")
+                            .num_columns(4)
+                            .spacing([20.0, 15.0]) // 行、列间距
+                            .striped(true) // 斑马纹
+                            .min_col_width(40.0)
+                            .show(ui, |ui| {
+                                // 表头
+                                ui.heading(RichText::new("标签名称").size(14.0));
+                                ui.heading(RichText::new("值").size(14.0));
+                                ui.heading(RichText::new("标签名称").size(14.0));
+                                ui.heading(RichText::new("值").size(14.0));
+                                ui.end_row();
+
+                                for (i, row) in self.rows.iter_mut().enumerate() { // 每行遍历添加
+                                    // 第一列: 固定文本
+                                    ui.label(RichText::new(&row.tag_name1).size(12.0));
+                                    // 第二列: 可编辑
+                                    ui.text_edit_singleline(&mut row.tag_value1);
+                                    // 第三列: 固定文本
+                                    ui.label(RichText::new(&row.tag_name2).size(12.0));
+                                    // 第四列: 可编辑
+                                    ui.text_edit_singleline(&mut row.tag_value2);
+                                    ui.end_row();
+                                }
+                            }
+                        );
+
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            ui.label(format!("总行数: {}", self.rows.len()));
+                            if ui.button("重置").clicked() {
+                                *self = MyEguiApp::default();
+                            }
+                        });
+                    }
+                );
+            }
+        );
+        // 右侧固定面板
+        egui::CentralPanel::default()
+            .show(ctx, |ui| {
+
+                // 右侧内容 - 不会滚动
+                ui.vertical_centered(|ui| {
+                    ui.set_min_height(ui.available_height());
+                    
+                    // 显示图片
+                    if let Some(texture) = &self.texture {
+
+                        custom_text(ui, "Preview:", "heading",
+                        Some(TextOptions {
+                            size: Some(24.0),
+                            color: None,
+                            align: "LEFT",
+                        }));
+                        ui.separator();
+
+                        let rect_w = ui.available_width();
+                        let start_pos = 1200.0 - rect_w;
+                        
+                        // 计算适合的显示尺寸
+                        // pic_width 和 pic_height 分别是当前可用宽度和高度的90%
+                        // display_width 和 display_height 是根据图片宽高比计算出的显示尺寸
+                        let pic_zoom = 0.9;
+                        let (display_width, display_height);
+                        if self.image_size.x > self.image_size.y {
+                            let pic_width = ui.available_width();
+                            display_width = pic_width * pic_zoom;
+                            let img_ratio = self.image_size.x / self.image_size.y;
+                            display_height = display_width / img_ratio;
+                        } else {
+                            let pic_height = ui.available_height();
+                            display_height = pic_height * pic_zoom;
+                            let img_ratio = self.image_size.y / self.image_size.x;
+                            display_width = display_height / img_ratio;
+                        }
+                        let display_size = egui::Vec2::new(display_width, display_height);
+                        
+                        // 创建固定高度的容器并显示图片
+                        ui.scope_builder(
+                            egui::UiBuilder::new()
+                                .max_rect(egui::Rect::from_min_size(
+                                    ui.available_rect_before_wrap().min,
+                                    egui::vec2(ui.available_width() * pic_zoom, ui.available_height() * pic_zoom)
+                                )),
+                            |ui| {
+                                ui.centered_and_justified(|ui| {
+                                    ui.add(egui::Image::from_texture(texture).fit_to_exact_size(display_size));
+                                });
+                            }
+                        );
+
+                        ui.separator();
+
+                        let rect_h = ui.available_height();
+                        let end_pos = 800.0 - rect_h;
+
+                        // 显示图片信息
+                        ui.scope_builder(
+                            egui::UiBuilder::new()
+                                .max_rect(egui::Rect::from_min_size(
+                                    egui::pos2(start_pos, end_pos),
+                                    egui::vec2(rect_w, ui.available_height())
+                                )),
+                            |ui| {
+                                ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                                    ui.label(format!("Image size: {} x {}", self.image_size.x, self.image_size.y));
+                                    if let Some(file) = &self.selected_file {
+                                        ui.label(egui::RichText::new(format!("File: {}", file))
+                                            .small()
+                                            .color(egui::Color32::LIGHT_GRAY));
+                                    }
+                                });
+                            }
+                        );
+
+                    } else {
+                        // 没有图片时的占位内容 - 使用垂直居中
+                        ui.vertical_centered(|ui| {
+                            ui.add_space(available_height * 0.3);
+                            ui.heading(egui::RichText::new("Please select a picture").size(48.0));
+                            ui.add_space(15.0);
+                            ui.label(egui::RichText::new("Support: PNG, JPG, JPEG, BMP, GIF").size(20.0));
+                        });
+                    }
+                });
+            });
+    }
+}
+
+
+
+fn main() {
+    let native_options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([1200.0, 800.0]) // 窗口大小
+            .with_resizable(false), // 禁止窗口缩放
+        ..Default::default()
+    };
+
+
+    let _ = eframe::run_native(
+        "My egui App", 
+        native_options, 
+        Box::new(|cc| {
+            setup_fonts_and_style(&cc.egui_ctx); // 设置自定义字体和样式
+            Ok(Box::new(MyEguiApp::default())) // 创建并返回 MyEguiApp 实例
+        })
+    );
+}
+
+
+
+
+
+
+
+
+// =================================================================================================================================================================
+
+
+
+
+
+
+
+
+
+// 表格实现
+use eframe::egui;
+
+fn main() -> Result<(), eframe::Error> {
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default().with_inner_size([500.0, 250.0]),
+        ..Default::default()
+    };
+    
+    eframe::run_native(
+        "Four-Column Grid Table",
+        options,
+        Box::new(|_cc| Ok(Box::<GridTableApp>::default())),
+    )
+}
+
+struct GridTableApp {
+    rows: Vec<TableRow>,
+}
+
+#[derive(Clone)]
+struct TableRow {
+    fixed_label1: String,
+    editable_value1: String,
+    fixed_label2: String, 
+    editable_value2: String,
+}
+
+// Implement Default trait for TableRow
+impl Default for TableRow {
+    fn default() -> Self {
+        Self {
+            fixed_label1: String::new(),
+            editable_value1: String::new(),
+            fixed_label2: String::new(),
+            editable_value2: String::new(),
+        }
+    }
+}
+
+// Custom Default implementation for GridTableApp
+impl Default for GridTableApp {
+    fn default() -> Self {
+        Self {
+            rows: vec![
+                TableRow {
+                    fixed_label1: "Name".to_string(),
+                    editable_value1: "John Doe".to_string(),
+                    fixed_label2: "Age".to_string(),
+                    editable_value2: "28".to_string(),
+                },
+                TableRow {
+                    fixed_label1: "Department".to_string(),
+                    editable_value1: "Engineering".to_string(),
+                    fixed_label2: "Position".to_string(),
+                    editable_value2: "Developer".to_string(),
+                },
+                TableRow {
+                    fixed_label1: "Project".to_string(),
+                    editable_value1: "Rust GUI Development".to_string(),
+                    fixed_label2: "Status".to_string(),
+                    editable_value2: "In Progress".to_string(),
+                },
+                TableRow {
+                    fixed_label1: "Email".to_string(),
+                    editable_value1: "example@company.com".to_string(),
+                    fixed_label2: "Phone".to_string(),
+                    editable_value2: "123-456-7890".to_string(),
+                },
+            ],
+        }
+    }
+}
+
+impl GridTableApp {
+    fn ui(&mut self, ui: &mut egui::Ui) {
+        if self.rows.is_empty() {
+            ui.centered_and_justified(|ui| {
+                ui.label("No data available, please add new items above");
+            });
+            return;
+        }
+        
+        // Create compact table using Grid
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            egui::Grid::new("four_column_grid")
+                .num_columns(4) // 4列
+                .spacing([20.0, 15.0]) // 行、列间距
+                .striped(true) // 斑马纹
+                .min_col_width(80.0)
+                .max_col_width(120.0)
+                .show(ui, |ui| {
+                    // Header row
+                    ui.strong("Item");
+                    ui.strong("Item Description");
+                    ui.strong("Value");
+                    ui.strong("Value Description");
+                    ui.end_row();
+
+                    // 数据行
+                    for (i, row) in self.rows.iter_mut().enumerate() { // 每行遍历添加
+                        // 第一列: 固定文本
+                        ui.label(&row.fixed_label1);
+
+                        // 第二列: 可编辑
+                        ui.text_edit_singleline(&mut row.editable_value1);
+                        
+                        // 第三列: 固定文本
+                        ui.label(&row.fixed_label2);
+
+                        // 第四列: 可编辑
+                        ui.text_edit_singleline(&mut row.editable_value2);
+                        
+                        ui.end_row();
+                    }
+                });
+        });
+        
+        // Bottom statistics
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.label(format!("Total Rows: {}", self.rows.len()));
+            if ui.button("Reset to Default").clicked() {
+                *self = GridTableApp::default();
+            }
+        });
+    }
+}
+
+impl eframe::App for GridTableApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            self.ui(ui);
+        });
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// 标签实现
+use eframe::egui;
+
+fn main() -> Result<(), eframe::Error> {
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default().with_inner_size([800.0, 600.0]),
+        ..Default::default()
+    };
+    
+    eframe::run_native(
+        "标签页示例",
+        options,
+        Box::new(|_cc| {
+            Ok(Box::new(TabApp::new()) as Box<dyn eframe::App>)
+        }),
+
+    )
+}
+
+
+struct TabApp {
+    current_tab: usize,
+    tabs: Vec<Tab>,
+}
+
+#[derive(Clone)]
+struct Tab {
+    title: String,
+    content: String,
+}
+
+impl TabApp {
+    fn new() -> Self {
+        let mut app = Self {
+            current_tab: 0,
+            tabs: Vec::new(),
+        };
+        // 添加一些初始标签页
+        app.tabs.push(Tab {
+            title: "Hello".to_string(),
+            content: "Welcome to the tab example app!".to_string(),
+        });
+        app.tabs.push(Tab {
+            title: "Settings".to_string(),
+            content: "This is the settings page.".to_string(),
+        });
+        app
+    }
+}
+
+
+impl eframe::App for TabApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            // 标签页头部
+            ui.horizontal(|ui| {
+                let mut tabs_to_remove = Vec::new();
+                
+                for (i, tab) in self.tabs.iter().enumerate() {
+                    let is_selected = self.current_tab == i;
+                    
+                    // 使用不同的样式来区分选中和未选中的标签
+                    let response = if is_selected {
+                        ui.add(
+                            egui::Button::new(&tab.title)
+                                .fill(egui::Color32::LIGHT_BLUE)
+                                .min_size(egui::Vec2::new(80.0, 30.0))
+                        )
+                    } else {
+                        ui.button(&tab.title)
+                    };
+                    
+                    if response.clicked() {
+                        self.current_tab = i;
+                    }
+                    
+                    // 添加关闭按钮（除了首页）
+                    if i > 0 {
+                        let close_response = ui.button("*");
+                        if close_response.clicked() {
+                            tabs_to_remove.push(i);
+                        }
+                    }
+                }
+                
+                // 在循环结束后删除标签页
+                for &remove_index in tabs_to_remove.iter().rev() {
+                    self.tabs.remove(remove_index);
+                    if self.current_tab >= remove_index && self.current_tab > 0 {
+                        self.current_tab -= 1;
+                    }
+                }
+
+                
+                // 添加新标签页按钮
+                if ui.button("+").clicked() {
+                    self.tabs.push(Tab {
+                        title: format!("Tab {}", self.tabs.len()),
+                        content: format!("This is tab {} content", self.tabs.len()),
+                    });
+                    self.current_tab = self.tabs.len() - 1;
+                }
+            });
+            
+            ui.separator();
+            
+            // 显示当前选中的标签页内容
+            if let Some(tab) = self.tabs.get_mut(self.current_tab) {
+                ui.vertical(|ui| {
+                    ui.heading(&tab.title);
+                    ui.separator();
+                    
+                    // 标签页内容区域
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut tab.content)
+                                .desired_rows(10)
+                                .desired_width(f32::INFINITY)
+                        );
+                    });
+                });
+            }
+        });
+    }
+}
+
+impl Default for TabApp {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+
+
+
+// 标签实现2
+use eframe::egui;
+use std::collections::HashMap;
+
+#[derive(Default)]
+struct TabBrowser {
+    tabs: HashMap<usize, Tab>,
+    active_tab: Option<usize>,
+    next_tab_id: usize,
+    new_tab_content: String,
+}
+
+#[derive(Clone)]
+struct Tab {
+    id: usize,
+    title: String,
+    content: String,
+}
+
+impl Tab {
+    fn new(id: usize, title: String, content: String) -> Self {
+        Self { id, title, content }
+    }
+}
+
+impl TabBrowser {
+    /// 添加新标签页
+    fn add_tab(&mut self, title: String, content: String) {
+        // 限制最大标签页数量为8个
+        if self.tabs.len() >= 8 {
+            return;
+        }
+        
+        let id = self.next_tab_id;
+        self.tabs.insert(id, Tab::new(id, title, content));
+        self.active_tab = Some(id);
+        self.next_tab_id += 1;
+    }
+
+    /// 关闭指定标签页
+    fn close_tab(&mut self, id: usize) {
+        self.tabs.remove(&id);
+        if self.active_tab == Some(id) {
+            self.active_tab = self.tabs.keys().next().copied();
+        }
+    }
+
+    /// 渲染标签栏UI
+    fn ui_tab_bar(&mut self, ui: &mut egui::Ui) {
+        // 获取可用宽度
+        let available_width = ui.available_width();
+        let tab_count = self.tabs.len();
+        
+        // 新建按钮宽度
+        let new_button_width = 30.0;
+        
+        // 设置最小和最大标签页宽度
+        let min_tab_width = 80.0;
+        let max_tab_width = 160.0;
+        
+        // 计算可用于标签页的总宽度
+        let available_for_tabs = available_width - new_button_width;
+        
+        // 计算每个标签页的宽度
+        let tab_width = if tab_count > 0 {
+            (available_for_tabs / tab_count as f32).clamp(min_tab_width, max_tab_width)
+        } else {
+            min_tab_width
+        };
+        
+        // 使用水平布局，但确保新建按钮始终在右侧
+        ui.horizontal(|ui| {
+            // 左侧：标签页区域（可滚动）
+            let tab_area_width = available_width - new_button_width;
+            let max_height = ui.spacing().interact_size.y;
+            
+            // 标签页区域
+            let tab_area_response = ui.allocate_ui_at_rect(
+                egui::Rect::from_min_size(
+                    ui.cursor().min,
+                    egui::vec2(tab_area_width, max_height)
+                ),
+                |ui| {
+                    // 使用水平滚动区域
+                    egui::ScrollArea::horizontal()
+                        .max_height(max_height)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                // 显示所有标签页
+                                let mut tabs_to_close = Vec::new();
+                                let tab_ids: Vec<usize> = self.tabs.keys().copied().collect();
+                                
+                                for &tab_id in &tab_ids {
+                                    if let Some(tab) = self.tabs.get(&tab_id) {
+                                        let is_active = self.active_tab == Some(tab_id);
+                                        
+                                        // 创建标签页按钮
+                                        let tab_text = format!("{} ×", tab.title);
+                                        let response = ui.add(
+                                            egui::SelectableLabel::new(is_active, &tab_text)
+                                                .min_size(egui::vec2(tab_width, 0.0))
+                                        );
+                                        
+                                        // 点击标签页切换
+                                        if response.clicked() {
+                                            self.active_tab = Some(tab_id);
+                                        }
+                                        
+                                        // 检查是否点击了关闭按钮区域
+                                        if response.clicked() {
+                                            let rect = response.rect;
+                                            let close_rect = egui::Rect::from_min_size(
+                                                egui::pos2(rect.right() - 20.0, rect.top()),
+                                                egui::vec2(20.0, rect.height()),
+                                            );
+                                            if close_rect.contains(response.interact_pointer_pos().unwrap_or_default()) {
+                                                tabs_to_close.push(tab_id);
+                                            }
+                                        }
+                                        
+                                        // 中键点击关闭标签页
+                                        if response.middle_clicked() {
+                                            tabs_to_close.push(tab_id);
+                                        }
+                                        
+                                        // 右键菜单
+                                        response.context_menu(|ui| {
+                                            if ui.button("close").clicked() {
+                                                tabs_to_close.push(tab_id);
+                                                ui.close_menu();
+                                            }
+                                        });
+                                    }
+                                }
+                                
+                                // 关闭需要关闭的标签页
+                                for tab_id in tabs_to_close {
+                                    self.close_tab(tab_id);
+                                }
+                            });
+                        });
+                }
+            );
+            
+            // 右侧：新建按钮（固定位置）
+            ui.allocate_ui_at_rect(
+                egui::Rect::from_min_size(
+                    egui::pos2(
+                        tab_area_response.response.rect.right(),
+                        ui.cursor().min.y
+                    ),
+                    egui::vec2(new_button_width, max_height)
+                ),
+                |ui| {
+                    let new_button = ui.add(
+                        egui::Button::new("+")
+                            .min_size(egui::vec2(new_button_width, 0.0))
+                    );
+                    
+                    // 如果达到最大标签页数量，禁用新建按钮
+                    if self.tabs.len() >= 8 {
+                        new_button.on_disabled_hover_text("Maximum tabs reached (8)");
+                    } else {
+                        if new_button.on_hover_text("New Tab").clicked() {
+                            let title = format!("Tab {}", self.next_tab_id);
+                            self.add_tab(title, "Welcome to the new tab!".to_string());
+                        }
+                    }
+
+                }
+            );
+        });
+    }
+
+    /// 渲染标签页内容UI
+    fn ui_tab_content(&mut self, ui: &mut egui::Ui) {
+        if let Some(active_tab_id) = self.active_tab {
+            if let Some(tab) = self.tabs.get_mut(&active_tab_id) {
+                ui.heading(&tab.title);
+                ui.separator();
+                
+                // 标签页内容区域
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.label(&tab.content);
+                    ui.add_space(10.0);
+                    
+                    // Simulate some browser content
+                    ui.heading("Simulated Web Page Content");
+                    ui.label("This is a simulated web page inside the tab.");
+                    ui.add_space(10.0);
+                    
+                    ui.collapsing("More details", |ui| {
+                        ui.label("Here you can put more detailed information...");
+                        ui.label("For example:");
+                        ui.label("- Images");
+                        ui.label("- Tables");
+                        ui.label("- Forms");
+                        ui.label("- Other interactive elements");
+                    });
+                });
+            }
+        } else {
+            // 没有标签页时的显示
+            ui.vertical_centered(|ui| {
+                ui.heading("There are no open tabs.");
+                ui.label("Click the '+' button above to create a new tab.");
+            });
+        }
+    }
+}
+
+impl eframe::App for TabBrowser {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            // 标签页栏
+            self.ui_tab_bar(ui);
+            
+            ui.separator();
+            
+            // 标签页内容
+            self.ui_tab_content(ui);
+        });
+
+        // 添加一些初始标签页（仅在第一次运行时）
+        if self.tabs.is_empty() {
+            self.add_tab(
+                "Main Page".to_string(),
+                "Welcome to the simulated browser!\n\nThis is a tab simulation program implemented with Rust and egui.".to_string(),
+            );
+            self.add_tab(
+                "About".to_string(),
+                "About this program:\n\n- Built with egui for the user interface\n- Supports multi-tab management\n- Can create, switch, and close tabs\n- Simulates basic browser functionality".to_string(),
+            );
+        }
+    }
+}
+
+fn main() -> Result<(), eframe::Error> {
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default().with_inner_size([1000.0, 700.0]),
+        ..Default::default()
+    };
+    eframe::run_native(
+        "浏览器标签页模拟",
+        options,
+        Box::new(|_cc| Ok(Box::<TabBrowser>::default())),
+    )
+}
