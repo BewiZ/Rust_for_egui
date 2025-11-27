@@ -12,9 +12,7 @@ use std::{
     path::Path,
     fs::File,
     io::{BufReader, BufRead, Seek, SeekFrom},
-    collections::HashMap,
-    env,
-    time::Instant,
+    collections::HashMap
 };
 use egui::{ColorImage, RichText, TextureHandle};
 use nalgebra::Vector4;
@@ -727,7 +725,7 @@ impl MyEguiApp {
         self.original_image = Some(original_image.clone());
         
         // 转换为EGUI显示用的Rgba8格式
-        let image = original_image.to_rgba8();
+        // let image = original_image.to_rgba8();
         // ========================================================
 
         // 解码图片字节数据
@@ -1508,12 +1506,12 @@ impl eframe::App for MyEguiApp {
                                     );
 
                                     // 1. 可选：绘制文字区域的边框（便于调试，可删除）
-                                    ui.painter().rect_stroke(
-                                        text_rect,
-                                        egui::Rounding::ZERO, // 使用 egui::Rounding::ZERO 替代 Rounding::none()
-                                        egui::Stroke::new(1.0f32, egui::Color32::GRAY),
-                                        egui::StrokeKind::Outside
-                                    );
+                                    // ui.painter().rect_stroke(
+                                    //     text_rect,
+                                    //     egui::Rounding::ZERO, // 使用 egui::Rounding::ZERO 替代 Rounding::none()
+                                    //     egui::Stroke::new(1.0f32, egui::Color32::GRAY),
+                                    //     egui::StrokeKind::Outside
+                                    // );
 
 
                                     // 2. 准备要显示的EXIF文字（和导出逻辑保持一致）
@@ -1591,7 +1589,7 @@ impl eframe::App for MyEguiApp {
                             }
                         );
 
-                        /// 在图片区域和信息区域之间添加分割线
+                        // 在图片区域和信息区域之间添加分割线
                         ui.separator();
                         
                         // 信息显示区域 - 固定在底部15%
